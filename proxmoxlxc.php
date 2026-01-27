@@ -329,7 +329,7 @@ function proxmoxlxc_ClientAreaOutput($params, $key){
 // 允许执行的func
 function proxmoxlxc_AllowFunction(){
 	return [
-		'client'=>["Getcurrent","delete_snapshot","RollBACK_snapshot","create_snapshot","nat_add","nat_del","Vnc"],
+		'client'=>["Getcurrent","delete_snapshot","RollBACK_snapshot","create_snapshot","nat_add","nat_del","Vnc","Reinstall"],
 	];
 }
 
@@ -1458,5 +1458,74 @@ function proxmoxlxc_request($params,$url,$data="",$method='GET'){
         
        
     }
+/**
+ * 魔方财务原生重装系统对接 (修正版)
+ */
+function proxmoxlxc_Reinstall($params){
+    // 1. 获取新镜像
+    $new_os = $params['reinstall_os']; 
+    if(empty($new_os)){
+        return ['status'=>'error', 'msg'=>'未接收到操作系统镜像参数'];
+    }
 
+    $vmid = $params['domain']; 
+    $node = $params['server_host'];
+    $ip = $params['dedicatedip'];
+
+    // 2. 停止并删除容器 (跳过用户管理)
+    proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid/status/stop", "", "POST");
+    sleep(2);
+    proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid?purge=1&destroy-unreferenced-disks=1&force=1", "", "DELETE");
+    sleep(4); // 给 PVE 留出释放 VMID 的时间
+
+    // 3. 严格按照原模块格式构建网络参数
+    $network['name'] = 'eth0';
+    $network['bridge'] = $params['configoptions']['net_name'];
+    $network['gw'] = $params['configoptions']['gateway'];
+    $network['ip'] = $ip . "/" . $params['configoptions']['Mask'];
+    $network['rate'] = $params['configoptions_upgrade']['network'];
+    
+    $network_body = "";
+    foreach ($network as $key => $value) {
+        if ($network_body == "") {
+            // 第一次：key=value -> key%3Dvalue
+            $network_body = $key . "%3D" . $value;
+        } else {
+            // 后续：,key=value -> %2Ckey%3Dvalue
+            $network_body = $network_body . "%2C" . $key . "%3D" . $value;
+        }
+    }
+
+    // 4. 构建完整的创建参数
+    $data['start'] = 1;
+    $data['ostemplate'] = $new_os;
+    $data['vmid'] = $vmid;
+    $data['hostname'] = $params['domain_name'] ?? $vmid; 
+    $data['unprivileged'] = 1;
+    $data['password'] = $params['password'];
+    $data['rootfs'] = $params['configoptions']['system_disk'] . ":" . $params['configoptions_upgrade']['disk'];
+    $data['cores'] = $params['configoptions_upgrade']['cpu'];
+    $data['memory'] = $params['configoptions_upgrade']['memory'];
+    $data['net0'] = $network_body; // 使用编码后的 body
+    $data['cmode'] = 'console';
+    $data['onboot'] = 1;
+    $data['nameserver'] = $params['configoptions']['dns'];
+    $data['description'] = "重装系统完成 - " . date('Y-m-d H:i:s');
+
+    // 处理 SWAP
+    if($params['configoptions']['swap'] == '1:1'){
+        $data['swap'] = $params['configoptions_upgrade']['memory'];
+    }elseif($params['configoptions']['swap'] == '1024'){
+        $data['swap'] = '1024';
+    }
+
+    // 5. 调用 API (注意：这里使用 extjs 接口，它对这种格式兼容性更好)
+    $info = json_decode(proxmoxlxc_request($params, "/api2/extjs/nodes/$node/lxc", $data, "POST"), true);
+
+    if($info['success'] || (isset($info['data']) && $info['data'] != null)){
+        return ['status'=>'success', 'msg'=>'系统重装任务已提交'];
+    }else{
+        return ['status'=>'error', 'msg'=>'创建失败：' . json_encode($info)];
+    }
+}
 ?>
