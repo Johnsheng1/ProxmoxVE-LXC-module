@@ -1459,10 +1459,10 @@ function proxmoxlxc_request($params,$url,$data="",$method='GET'){
        
     }
 /**
- * 魔方财务原生重装系统对接 (修正版)
+ * 魔方财务原生重装系统对接 (补全权限版)
  */
 function proxmoxlxc_Reinstall($params){
-    // 1. 获取新镜像
+    // 1. 基础参数获取
     $new_os = $params['reinstall_os']; 
     if(empty($new_os)){
         return ['status'=>'error', 'msg'=>'未接收到操作系统镜像参数'];
@@ -1471,14 +1471,15 @@ function proxmoxlxc_Reinstall($params){
     $vmid = $params['domain']; 
     $node = $params['server_host'];
     $ip = $params['dedicatedip'];
+    $username = $params['dedicatedip'] . "@pve"; // 对应的 PVE 用户名
 
-    // 2. 停止并删除容器 (跳过用户管理)
+    // 2. 停止并删除旧容器
     proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid/status/stop", "", "POST");
     sleep(2);
     proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid?purge=1&destroy-unreferenced-disks=1&force=1", "", "DELETE");
-    sleep(4); // 给 PVE 留出释放 VMID 的时间
+    sleep(4); 
 
-    // 3. 严格按照原模块格式构建网络参数
+    // 3. 构建网络参数 (处理 URL 编码防止参数校验失败)
     $network['name'] = 'eth0';
     $network['bridge'] = $params['configoptions']['net_name'];
     $network['gw'] = $params['configoptions']['gateway'];
@@ -1488,15 +1489,13 @@ function proxmoxlxc_Reinstall($params){
     $network_body = "";
     foreach ($network as $key => $value) {
         if ($network_body == "") {
-            // 第一次：key=value -> key%3Dvalue
             $network_body = $key . "%3D" . $value;
         } else {
-            // 后续：,key=value -> %2Ckey%3Dvalue
             $network_body = $network_body . "%2C" . $key . "%3D" . $value;
         }
     }
 
-    // 4. 构建完整的创建参数
+    // 4. 构建创建参数
     $data['start'] = 1;
     $data['ostemplate'] = $new_os;
     $data['vmid'] = $vmid;
@@ -1506,23 +1505,33 @@ function proxmoxlxc_Reinstall($params){
     $data['rootfs'] = $params['configoptions']['system_disk'] . ":" . $params['configoptions_upgrade']['disk'];
     $data['cores'] = $params['configoptions_upgrade']['cpu'];
     $data['memory'] = $params['configoptions_upgrade']['memory'];
-    $data['net0'] = $network_body; // 使用编码后的 body
+    $data['net0'] = $network_body;
     $data['cmode'] = 'console';
     $data['onboot'] = 1;
     $data['nameserver'] = $params['configoptions']['dns'];
-    $data['description'] = "重装系统完成 - " . date('Y-m-d H:i:s');
+    $data['description'] = "系统重装完成于: " . date('Y-m-d H:i:s');
 
-    // 处理 SWAP
     if($params['configoptions']['swap'] == '1:1'){
         $data['swap'] = $params['configoptions_upgrade']['memory'];
     }elseif($params['configoptions']['swap'] == '1024'){
         $data['swap'] = '1024';
     }
 
-    // 5. 调用 API (注意：这里使用 extjs 接口，它对这种格式兼容性更好)
+    // 5. 调用 API 创建容器
     $info = json_decode(proxmoxlxc_request($params, "/api2/extjs/nodes/$node/lxc", $data, "POST"), true);
 
+    // 6. 如果创建成功，立即补回权限
     if($info['success'] || (isset($info['data']) && $info['data'] != null)){
+        
+        // 重新分配 ACL 权限
+        // 注意：path 需要进行 URL 编码，PVE 路径为 /vms/{vmid}
+        $qx['path'] = "/vms/" . $vmid;
+        $qx['users']= $username;
+        $qx['roles'] = "PVEVMUser";
+        
+        // 发送分配权限请求 (PUT 模式)
+        proxmoxlxc_request($params, "/api2/extjs/access/acl", $qx, "PUT");
+
         return ['status'=>'success', 'msg'=>'系统重装任务已提交'];
     }else{
         return ['status'=>'error', 'msg'=>'创建失败：' . json_encode($info)];
