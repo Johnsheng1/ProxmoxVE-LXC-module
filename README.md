@@ -1,19 +1,13 @@
 # ProxmoxVE-LXC-module
-[个人博客](https://imzxw.cn) </br>
 
-<h3 align="center">ProxmoxVE-LXC</h3></br>
 
 魔方财务系统对接proxmoxVE的一款模块，可以对接pve的容器功能
 
-目前已经实现了绝大部分的功能，由于个人工作原因无法继续写下去了，放出来给大家做个参考吧
-
-欢迎与我交流QQ:1666633881
-<!--gold sponsors start-->
 
 
 ## 目前实现了那些功能 ？
 
-实现了大部分功能，例如 开通、开关机、停止、VNC、磁盘管理、弹性开通、端口映射（基于爱快）、图表状态监控!
+实现了大部分功能，例如 开通、开关机、停止、VNC、磁盘管理、弹性开通、端口映射（基于爱快）、图表状态监控，重装系统!
 
 * 后台商品配置功能:
 ![image](https://user-images.githubusercontent.com/49064211/215101029-ac49adcb-8a70-4982-b50a-62f3ec568039.png)
