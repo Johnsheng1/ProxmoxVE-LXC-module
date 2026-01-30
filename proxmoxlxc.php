@@ -579,31 +579,48 @@ function proxmoxlxc_ChartData($params){
 
 // vnc
 function proxmoxlxc_Vnc($params){
-    
-    // 判断是否存在VNC控制台的后端程序
-
+    // 1. 先验证 VNC 页面文件是否存在
     if(!proxmoxlxc_vnc_if($params)){
-
-        return ['status'=>'error','msg'=>'VNC功能未启用'];
-
+        return ['status'=>'error','msg'=>'VNC功能组件 mgnovnc.html 未安装'];
     }
-    
 
-    $ticket = proxmoxlxc_get_ticket($params);
-    if($ticket){
-        return ['status'=>'success','msg'=>'VNC连接创建成功','url'=>$params['server_http_prefix']."://".$params['server_ip'].":".$params['port']."/novnc/mgnovnc.html?xtermjs=1&console=lxc&node=".$params['server_host']."&vmid=".$params['domain']."&token=".$ticket];
+    // 2. 获取用户 Session 票据 (Login Ticket)
+    $login_ticket = proxmoxlxc_get_ticket($params);
+    if(!$login_ticket){
+        return ['status'=>'error','msg'=>'获取VNC票据失败，请检查用户权限或密码'];
     }
-    
-    
-    // 不存在返回控制面板
-    
-    
-    
-    
-    
-    //  return ['status'=>'success','msg'=>'打开面板成功','url'=>$params['server_http_prefix']."://".$params['server_ip'].":".$params['port']];
+
+    // 3. 重要：初始化 VNC 代理并获取 VNC Ticket
+    // 调用 /nodes/{node}/lxc/{vmid}/vncproxy
+    $vnc_proxy_data = [
+        'websocket' => 1,
+    ];
+    $vnc_res_raw = proxmoxlxc_request($params, "/api2/json/nodes/".$params['server_host']."/lxc/".$params['domain']."/vncproxy", $vnc_proxy_data, "POST");
+    $vnc_res = json_decode($vnc_res_raw, true);
+
+    if(!isset($vnc_res['data']['ticket'])){
+         return ['status'=>'error','msg'=>'启动VNC代理失败: ' . ($vnc_res['errors'] ?? '未知错误')];
+    }
+
+    $vnc_ticket = $vnc_res['data']['ticket'];
+
+    // 4. 组合最终 URL
+    // 标准 PVE 架构需要 pveticket (登录) 和 vncticket (连接)
+    $url = $params['server_http_prefix']."://".$params['server_ip'].":".$params['port']."/novnc/mgnovnc.html?" . http_build_query([
+        'xtermjs'   => 1,
+        'console'   => 'lxc',
+        'node'      => $params['server_host'],
+        'vmid'      => $params['domain'],
+        'vnc_ticket'=> $vnc_ticket,     // VNC 连接凭证
+        'token'     => $login_ticket,   // 登录凭证
+    ]);
+
+    return [
+        'status' => 'success',
+        'msg'    => 'VNC连接创建成功',
+        'url'    => $url
+    ];
 }
-
 
 
 // 开通方法
@@ -1343,36 +1360,34 @@ function proxmoxlxc_user_unban(){
 
 // 获取用户访问VNC授权
 function proxmoxlxc_get_ticket($params){
-    
     $curl = curl_init();
-
     $url = $params['server_http_prefix']."://".$params['server_ip'].":".$params['port']."/api2/extjs/access/ticket";
-    curl_setopt($curl,CURLOPT_URL,$url); 
-    curl_setopt($curl,CURLOPT_POSTFIELDS,"username=".$params['dedicatedip']."&password=".$params['password']."&realm=pve&new-format=1"); 
-    curl_setopt($curl,CURLOPT_SSL_VERIFYPEER,FALSE); // 屏蔽SSL
-    curl_setopt($curl,CURLOPT_SSL_VERIFYHOST,FALSE); // 屏蔽SSL
-    curl_setopt($curl, CURLOPT_RETURNTRANSFER,1);
+    
+    // 构建 POST 数据
+    $post_data = [
+        'username'   => $params['dedicatedip'],
+        'password'   => $params['password'],
+        'realm'      => 'pve',
+        'new-format' => 1
+    ];
+
+    curl_setopt($curl, CURLOPT_URL, $url); 
+    curl_setopt($curl, CURLOPT_POST, 1);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($post_data)); // 使用 http_build_query 保证格式
+    curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, FALSE);
+    curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, FALSE);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($curl, CURLOPT_TIMEOUT, 10);
     
     $response = curl_exec($curl);
     $err = curl_error($curl);
-    
     curl_close($curl);
     
-    if ($err) {
-        // 判断服务器请求正常
-      return FALSE;
-    } else {
-      
-        $response = json_decode($response,true);
-        if($response['success']){
-            return $response['data']['ticket'];
-        }else{
-            return FALSE;
-        }
-      
-    }
-
+    if ($err) return FALSE;
     
+    $res = json_decode($response, true);
+    // 注意：extjs 返回通常是 success 为 true，或者直接看 data.ticket
+    return (isset($res['data']['ticket'])) ? $res['data']['ticket'] : FALSE;
 }
 
 // VNC判断是否存在后端文件
