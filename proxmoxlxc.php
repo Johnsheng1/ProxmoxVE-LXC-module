@@ -1475,9 +1475,9 @@ function proxmoxlxc_Reinstall($params){
 
     // 2. 停止并删除旧容器
     proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid/status/stop", "", "POST");
-    sleep(2);
+    sleep(4);
     proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid?purge=1&destroy-unreferenced-disks=1&force=1", "", "DELETE");
-    sleep(4); 
+    sleep(10); 
 
     // 3. 构建网络参数 (处理 URL 编码防止参数校验失败)
     $network['name'] = 'eth0';
