@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Port Mapping Query / 端口映射查询</title>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --highlight: #3498db;
+            --bg: #f4f7f6;
+            --white: #ffffff;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+
+        .card {
+            background: var(--white);
+            width: 100%;
+            max-width: 420px;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            text-align: center;
+        }
+
+        h2 {
+            margin: 0 0 30px;
+            font-size: 22px;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .input-wrapper {
+            position: relative;
+            margin-bottom: 25px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 15px;
+            font-size: 18px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            outline: none;
+            box-sizing: border-box;
+            text-align: center;
+            transition: border-color 0.3s;
+            font-family: monospace;
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--highlight);
+        }
+
+        input[type="text"]::placeholder {
+            color: #ccc;
+            font-family: sans-serif;
+            font-size: 16px;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            background-color: var(--primary);
+            color: white;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s;
+            font-weight: 500;
+        }
+
+        button:hover {
+            background-color: #1a252f;
+        }
+
+        .result-box {
+            margin-top: 30px;
+            text-align: left;
+            display: none; /* Hidden by default */
+            border-top: 1px solid #f0f0f0;
+            padding-top: 25px;
+            animation: slideDown 0.3s ease-out;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-item {
+            margin-bottom: 20px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .label {
+            font-size: 13px;
+            color: #7f8c8d;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .label span {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-top: 2px;
+        }
+
+        .value {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--primary);
+            font-family: monospace;
+        }
+
+        .value.ssh { color: var(--highlight); }
+
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Port Mapping Query<br><span style="font-size: 14px; font-weight: normal; color: #999;">端口映射查询</span></h2>
+    
+    <div class="input-wrapper">
+        <input type="text" id="ipInput" placeholder="e.g. 10.0.1.42" autocomplete="off">
+    </div>
+
+    <button onclick="calculate()">Query / 查询</button>
+
+    <div class="result-box" id="resultBox">
+        <div class="result-item">
+            <div class="label">SSH Port<span>远程连接端口</span></div>
+            <div class="value ssh" id="sshPort">--</div>
+        </div>
+        <div class="result-item">
+            <div class="label">Port Range<span>可用端口范围</span></div>
+            <div class="value" id="portRange">--</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function calculate() {
+        const input = document.getElementById('ipInput').value.trim();
+        const resultBox = document.getElementById('resultBox');
+
+        // 简单正则校验 IPv4
+        const ipPattern = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+        const match = input.match(ipPattern);
+
+        if (!match) {
+            alert("Invalid IP Address format.\n请输入正确的 IP 地址格式 (例如 10.0.1.42)");
+            return;
+        }
+
+        // 提取 IP 段: 10.0.c.d
+        // match[1]=10, match[2]=0, match[3]=c, match[4]=d
+        const c = parseInt(match[3]);
+        const d = parseInt(match[4]);
+
+        // 简单范围校验
+        if (c > 255 || d > 255 || d === 0) {
+            alert("Invalid IP Address.\nIP 地址数值不正确。");
+            return;
+        }
+
+        // 计算逻辑
+        let ssh = "";
+        let pStart = "";
+        let pEnd = "";
+        
+        const cStr = c.toString();
+        const dStr = d.toString();
+
+        if (d < 10) {
+            // 个位数 (1-9) -> 补 00
+            ssh = "6" + cStr + "00" + dStr;
+            pStart = cStr + "00" + dStr + "0";
+            pEnd = cStr + "00" + dStr + "9";
+        } else if (d < 100) {
+            // 十位数 (10-99) -> 补 0
+            ssh = "6" + cStr + "0" + dStr;
+            pStart = cStr + "0" + dStr + "0";
+            pEnd = cStr + "0" + dStr + "9";
+        } else {
+            // 百位数 (100-255) -> 不补
+            ssh = "6" + cStr + dStr;
+            pStart = cStr + dStr + "0";
+            pEnd = cStr + dStr + "9";
+        }
+
+        // 显示结果
+        document.getElementById('sshPort').innerText = ssh;
+        document.getElementById('portRange').innerText = `${pStart} - ${pEnd}`;
+        resultBox.style.display = 'block';
+    }
+
+    // 回车键触发
+    document.getElementById('ipInput').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            calculate();
+        }
+    });
+</script>
+
+</body>
+</html>
