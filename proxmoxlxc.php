@@ -1549,7 +1549,7 @@ function proxmoxlxc_Reinstall($params){
 
         return ['status'=>'success', 'msg'=>'系统重装任务已提交'];
     }else{
-        return ['status'=>'error', 'msg'=>'创建失败：' . json_encode($info)];
+        return ['status'=>'error', 'msg'=>'创建失败，请重试系统重装：' . json_encode($info)];
     }
 }
 ?>
