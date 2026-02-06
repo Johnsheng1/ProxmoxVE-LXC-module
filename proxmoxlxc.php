@@ -1459,7 +1459,7 @@ function proxmoxlxc_request($params,$url,$data="",$method='GET'){
        
     }
 /**
- * 魔方财务原生重装系统对接 (补全权限版)
+ * 魔方财务原生重装系统对接 (带用户检测与补全功能)
  */
 function proxmoxlxc_Reinstall($params){
     // 1. 基础参数获取
@@ -1471,15 +1471,15 @@ function proxmoxlxc_Reinstall($params){
     $vmid = $params['domain']; 
     $node = $params['server_host'];
     $ip = $params['dedicatedip'];
-    $username = $params['dedicatedip'] . "@pve"; // 对应的 PVE 用户名
+    $username = $params['dedicatedip'] . "@pve"; // PVE 用户名规则
 
     // 2. 停止并删除旧容器
     proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid/status/stop", "", "POST");
     sleep(4);
     proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid?purge=1&destroy-unreferenced-disks=1&force=1", "", "DELETE");
-    sleep(10); 
+    sleep(4); 
 
-    // 3. 构建网络参数 (处理 URL 编码防止参数校验失败)
+    // 3. 构建网络参数 (处理 URL 编码)
     $network['name'] = 'eth0';
     $network['bridge'] = $params['configoptions']['net_name'];
     $network['gw'] = $params['configoptions']['gateway'];
@@ -1520,16 +1520,31 @@ function proxmoxlxc_Reinstall($params){
     // 5. 调用 API 创建容器
     $info = json_decode(proxmoxlxc_request($params, "/api2/extjs/nodes/$node/lxc", $data, "POST"), true);
 
-    // 6. 如果创建成功，立即补回权限
+    // 6. 创建成功后的用户权限处理
     if($info['success'] || (isset($info['data']) && $info['data'] != null)){
         
-        // 重新分配 ACL 权限
-        // 注意：path 需要进行 URL 编码，PVE 路径为 /vms/{vmid}
+        // --- 新增：用户存在性检测逻辑 ---
+        
+        // 尝试获取用户信息
+        $check_user = json_decode(proxmoxlxc_request($params, "/api2/json/access/users/" . $username, "", "GET"), true);
+        
+        // 如果返回结果中没有 data，说明用户不存在，需要创建
+        if (!isset($check_user['data']) || empty($check_user['data'])) {
+            $user_post_data = [
+                'userid' => $username,
+                'password' => $params['password'],
+                'comment' => "重装系统时自动补全的用户"
+            ];
+            // 执行创建用户请求
+            proxmoxlxc_request($params, "/api2/extjs/access/users", $user_post_data, "POST");
+        }
+        
+        // --- 分配权限 (ACL) ---
+        // 无论用户是刚创建的还是原来就有的，都需要重新绑定到新的 VMID 路径上
         $qx['path'] = "/vms/" . $vmid;
-        $qx['users']= $username;
+        $qx['users'] = $username;
         $qx['roles'] = "PVEVMUser";
         
-        // 发送分配权限请求 (PUT 模式)
         proxmoxlxc_request($params, "/api2/extjs/access/acl", $qx, "PUT");
 
         return ['status'=>'success', 'msg'=>'系统重装任务已提交'];
