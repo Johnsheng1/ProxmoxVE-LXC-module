@@ -149,6 +149,14 @@ function proxmoxlxc_ConfigOptions(){
             'default'=>"baidu.com",
             'key'=>'ikuai_ip'
         ],
+        [
+            'type'=>'text',
+            'name'=>'流量限制(GB)',
+            'description'=>'月流量限制，0为不限制，达到后自动停机',
+            'placeholder'=>'100',
+            'default'=>"0",
+            'key'=>'traffic_limit'
+        ],
         
         
     ];
@@ -1551,5 +1559,93 @@ function proxmoxlxc_Reinstall($params){
     }else{
         return ['status'=>'error', 'msg'=>'创建失败，请重试系统重装：' . json_encode($info)];
     }
+}
+/**
+ * 核心：流量更新、重置与停机逻辑 (多节点兼容修复版)
+ * 魔方财务会自动定时调用此函数
+ */
+function proxmoxlxc_UsageUpdate($params) {
+    // API 请求依然使用 vmid
+    $vmid = $params['domain'];
+    $node = $params['server_host'];
+    
+    // 【关键修改】缓存 Key 使用 hostid (产品ID)，确保全系统唯一，不受 PVE 节点影响
+    $unique_id = $params['hostid']; 
+
+    // 1. 获取 PVE 实时流量
+    $info = json_decode(proxmoxlxc_request($params, "/api2/json/nodes/$node/lxc/$vmid/status/current", "", "GET"), true);
+    
+    if (!$info || !isset($info['data'])) {
+        return ['status' => 'error', 'msg' => '无法获取流量数据'];
+    }
+
+    // 当前 PVE 总流量 (Bytes)
+    $current_bytes = ($info['data']['netin'] ?? 0) + ($info['data']['netout'] ?? 0);
+
+    // 2. 读取缓存计算增量
+    $cache = _proxmoxlxc_read_cache();
+    
+    // 【修改】使用 unique_id 读取缓存
+    $last_bytes = $cache[$unique_id]['last_bytes'] ?? 0;
+    
+    // 计算本次增量 (如果当前小于上次，说明重启过，增量即为当前值)
+    $delta_bytes = ($current_bytes < $last_bytes) ? $current_bytes : ($current_bytes - $last_bytes);
+    
+    // 3. 累加到数据库 (转为 MB)
+    $current_usage_mb = (float)$params['bwusage']; 
+    $delta_mb = $delta_bytes / 1048576; // Bytes -> MB
+    $new_usage_mb = $current_usage_mb + $delta_mb;
+
+    // 4. 更新缓存
+    // 【修改】使用 unique_id 写入缓存
+    $cache[$unique_id]['last_bytes'] = $current_bytes;
+    $cache[$unique_id]['time'] = time();
+
+    // 5. 每月重置逻辑 (根据注册日)
+    $reg_day = date('d', strtotime($params['regdate'])); // 获取注册日
+    $today_day = date('d');
+    
+    // 【修改】使用 unique_id 读取上次重置时间
+    $last_reset = $cache[$unique_id]['last_reset'] ?? '';
+    $today_str = date('Y-m-d');
+
+    // 如果今天是注册日，且今天还没重置过
+    if ($reg_day == $today_day && $last_reset != $today_str) {
+        $new_usage_mb = 0; // 流量清零
+        
+        // 【修改】使用 unique_id 记录重置时间
+        $cache[$unique_id]['last_reset'] = $today_str;
+
+        // 解封逻辑
+        if ($params['domainstatus'] == 'Suspended') {
+             proxmoxlxc_UnsuspendAccount($params);
+             Db::name('host')->where('id', $params['hostid'])->update(['domainstatus' => 'Active', 'suspendreason' => '']);
+             $params['domainstatus'] = 'Active';
+        }
+    }
+
+    // 保存缓存文件
+    _proxmoxlxc_write_cache($cache);
+
+    // 6. 超量停机逻辑
+    $limit_gb = intval($params['configoptions']['traffic_limit'] ?? 0);
+    $limit_mb = $limit_gb * 1024;
+    
+    $update_data = ['bwusage' => $new_usage_mb];
+    
+    if ($limit_gb > 0) {
+        $update_data['bwlimit'] = $limit_mb; 
+
+        if ($new_usage_mb >= $limit_mb && $params['domainstatus'] == 'Active') {
+            proxmoxlxc_SuspendAccount($params);
+            $update_data['domainstatus'] = 'Suspended';
+            $update_data['suspendreason'] = "流量超额暂停 (已用: ".round($new_usage_mb/1024, 2)."GB / 限制: {$limit_gb}GB)";
+        }
+    }
+
+    // 7. 执行数据库更新
+    Db::name('host')->where('id', $params['hostid'])->update($update_data);
+
+    return ['status' => 'success', 'msg' => '流量更新成功'];
 }
 ?>

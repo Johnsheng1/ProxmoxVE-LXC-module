@@ -101,19 +101,33 @@
       </div>
     </div>
   </div>
+ <!-- 流量使用卡片 (替换了原来的运行时间) -->
   <div class="col-xl-3 col-md-6 mb-4">
     <div class="card border-left-warning shadow h-100 py-2">
       <div class="card-body">
         <div class="row no-gutters align-items-center">
           <div class="col mr-2">
-            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">已正常运行</div>
-            <div class="h5 mb-0 font-weight-bold text-gray-800"><a id="run_time"></a></div>
+            <!-- 标题和百分比 -->
+            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                流量使用 (<a id="traffic_percent">0</a>%)
+            </div>
+            <!-- 进度条 -->
+            <div class="row no-gutters align-items-center">
+              <div class="col">
+                <div class="progress progress-sm mr-2">
+                  <div class="progress-bar bg-warning" role="progressbar" id="traffic_jdt" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                </div>
+              </div>
+            </div>
+            <!-- 具体数值显示 (PHP直接渲染初始值) -->
+            <div class="h5 mb-0 mt-1 font-weight-bold text-gray-800">
+                <a id="traffic_text">计算中...</a>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </div>
-</div>
 
 
 <!--使用概括结束-->
@@ -220,7 +234,50 @@
         }
         
         
+        // --- 新增：流量计算逻辑 (页面加载时执行一次) ---
+    (function initTraffic() {
+        // 从 PHP 变量获取流量数据 (单位通常是 MB)
+        // 注意：这里假设 bwusage 是已用流量，bwlimit 是限制流量(0为无限)
+        var used_mb = parseFloat("{$params['bwusage']}"); 
+        var limit_mb = parseFloat("{$params['bwlimit']}"); 
         
+        // 格式化单位函数
+        function formatSize(mb) {
+            if (mb === 0) return "0 M";
+            if (mb > 1024) {
+                return (mb / 1024).toFixed(2) + " G";
+            } else {
+                return mb.toFixed(2) + " M";
+            }
+        }
+
+        var display_text = "";
+        var percent = 0;
+
+        if (limit_mb <= 0) {
+            // 无限流量情况
+            display_text = formatSize(used_mb) + " / ∞";
+            percent = 0; 
+        } else {
+            // 有限流量情况
+            display_text = formatSize(used_mb) + " / " + formatSize(limit_mb);
+            
+            // 计算百分比
+            percent = (used_mb / limit_mb) * 100;
+            if (percent > 100) percent = 100;
+        }
+
+        // 更新 UI
+        // 注意：这里直接使用 ID 操作 DOM，保持和你原代码风格一致
+        var traffic_text_elem = document.getElementById('traffic_text');
+        var traffic_percent_elem = document.getElementById('traffic_percent');
+        var traffic_jdt_elem = document.getElementById('traffic_jdt');
+
+        if(traffic_text_elem) traffic_text_elem.innerHTML = display_text;
+        if(traffic_percent_elem) traffic_percent_elem.innerHTML = percent.toFixed(1);
+        if(traffic_jdt_elem) traffic_jdt_elem.style.width = percent + "%";
+
+    })();
         
         function ajax(options){
         //创建一个ajax对象
